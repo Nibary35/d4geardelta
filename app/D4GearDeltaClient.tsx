@@ -566,7 +566,7 @@ function formatInput(value: number): string {
 }
 
 function verdict(percent: number | null): string {
-  if (percent === null) return "Need Baseline";
+  if (percent === null) return "Scan Items";
   if (percent > 0.05) return "Candidate Better";
   if (percent < -0.05) return "Equipped Better";
   return "About Even";
@@ -635,8 +635,14 @@ export function D4GearDeltaClient() {
   const liveComparison = useMemo(() => compareStats(currentStats, candidateStats), [currentStats, candidateStats]);
   const gearComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, gearScan.equipped, gearScan.candidate), [profileAdjustedCurrent, gearScan]);
   const sealComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, sealScan.equipped, sealScan.candidate), [profileAdjustedCurrent, sealScan]);
-  const gearWeighted = useMemo(() => compareWeighted(weightedRowsFromAffixes(gearScan.equipped.affixes, gearScan.candidate.affixes, activeClass)), [gearScan, activeClass]);
-  const sealWeighted = useMemo(() => compareWeighted(weightedRowsFromAffixes(sealScan.equipped.affixes, sealScan.candidate.affixes, activeClass)), [sealScan, activeClass]);
+  const gearWeighted = useMemo(() => {
+    const rows = weightedRowsFromAffixes(gearScan.equipped.affixes, gearScan.candidate.affixes, activeClass);
+    return rows.length ? compareWeighted(rows) : null;
+  }, [gearScan, activeClass]);
+  const sealWeighted = useMemo(() => {
+    const rows = weightedRowsFromAffixes(sealScan.equipped.affixes, sealScan.candidate.affixes, activeClass);
+    return rows.length ? compareWeighted(rows) : null;
+  }, [sealScan, activeClass]);
   const selectedData = profile[selectedSlot] ?? emptySlot();
 
   useEffect(() => {
@@ -721,8 +727,9 @@ export function D4GearDeltaClient() {
       return;
     }
     const setter = context.mode === "gear" ? setGearScan : setSealScan;
-    setter((scan) => ({ ...scan, [context.target]: { ...scan[context.target], imageUrl } }));
-    setOcrStatus(`Loaded ${file.name} as ${context.target}. Run OCR or paste text, then parse.`);
+    setter((scan) => ({ ...scan, [context.target]: { ...emptySlot(), imageUrl } }));
+    setOcrStatus(`Loaded ${file.name} as ${context.target}. OCR is starting automatically...`);
+    await scanImageForCompare(context.mode, context.target, imageUrl);
   }
 
   async function pasteImage(context: { type: "slot" } | { type: "scan"; mode: ScanMode; target: ScanTarget }) {
@@ -749,25 +756,38 @@ export function D4GearDeltaClient() {
     }
     setOcrStatus("OCR starting. The first browser scan can take a moment while language data loads...");
     try {
-      const { recognize } = await import("tesseract.js");
-      const result = await recognize(imageUrl, "eng", {
-        logger: (message) => {
-          if (message.status) {
-            const progress = message.progress ? ` ${Math.round(message.progress * 100)}%` : "";
-            setOcrStatus(`OCR ${message.status}${progress}`);
-          }
-        },
-      });
-      const text = result.data.text;
+      const text = await recognizeTooltipImage(imageUrl, "OCR");
       if (context.type === "slot") {
         setSlotDraftText(text);
+        setOcrStatus("OCR complete. Review the text, then save the slot.");
       } else {
-        updateScanText(context.mode, context.target, text);
+        applyParsedScan(context.mode, context.target, text, imageUrl);
       }
-      setOcrStatus("OCR complete. Review the text, then parse/save.");
     } catch (error) {
       setOcrStatus(`OCR failed: ${error instanceof Error ? error.message : "unknown browser OCR error"}`);
     }
+  }
+
+  async function scanImageForCompare(mode: ScanMode, target: ScanTarget, imageUrl: string) {
+    try {
+      const text = await recognizeTooltipImage(imageUrl, `${target} OCR`);
+      applyParsedScan(mode, target, text, imageUrl);
+    } catch (error) {
+      setOcrStatus(`OCR failed for ${target}: ${error instanceof Error ? error.message : "unknown browser OCR error"}`);
+    }
+  }
+
+  async function recognizeTooltipImage(imageUrl: string, label: string): Promise<string> {
+    const { recognize } = await import("tesseract.js");
+    const result = await recognize(imageUrl, "eng", {
+      logger: (message) => {
+        if (message.status) {
+          const progress = message.progress ? ` ${Math.round(message.progress * 100)}%` : "";
+          setOcrStatus(`${label} ${message.status}${progress}`);
+        }
+      },
+    });
+    return result.data.text;
   }
 
   function updateScanText(mode: ScanMode, target: ScanTarget, text: string) {
@@ -777,9 +797,21 @@ export function D4GearDeltaClient() {
 
   function parseScanSide(mode: ScanMode, target: ScanTarget) {
     const source = mode === "gear" ? gearScan[target] : sealScan[target];
-    const parsed = buildSlotFromText(source.rawText, activeClass, source.imageUrl);
+    if (!source.rawText.trim()) {
+      setOcrStatus(`No OCR/manual text for ${target}. Click OCR, paste tooltip text, or load the image again.`);
+      return;
+    }
+    applyParsedScan(mode, target, source.rawText, source.imageUrl);
+  }
+
+  function applyParsedScan(mode: ScanMode, target: ScanTarget, text: string, imageUrl: string) {
+    const parsed = buildSlotFromText(text, activeClass, imageUrl);
     const setter = mode === "gear" ? setGearScan : setSealScan;
     setter((scan) => ({ ...scan, [target]: parsed }));
+    const mappedNote = parsed.mapped
+      ? `${parsed.mapped} mapped damage stat(s)`
+      : "no mapped damage stats";
+    setOcrStatus(`Parsed ${target}: ${parsed.affixes.length} row(s), ${mappedNote}.`);
   }
 
   function clearScan(mode: ScanMode) {
@@ -1134,7 +1166,7 @@ function CompareSection(props: {
   copy: string;
   scan: Record<ScanTarget, ScanSide>;
   comparison: ReturnType<typeof compareScannedItems>;
-  weighted: ReturnType<typeof compareWeighted>;
+  weighted: ReturnType<typeof compareWeighted> | null;
   onFile: (target: ScanTarget, file: File) => void | Promise<void>;
   onPaste: (target: ScanTarget) => void | Promise<void>;
   onOcr: (target: ScanTarget) => void | Promise<void>;
@@ -1178,7 +1210,7 @@ function ResultPanel({ title, comparison, weighted, profileNote }: { title: stri
       <p className="eyebrow">{title}</p>
       <h2 className={percent !== null && percent > 0 ? "positive" : percent !== null && percent < 0 ? "negative" : ""}>{verdict(percent)}</h2>
       <strong className="big-result">{formatPercent(percent)}</strong>
-      {comparison ? <p>{formatScore(comparison.currentScore)} → {formatScore(comparison.candidateScore)}</p> : <p>Parse both sides to calculate a formula result.</p>}
+      {comparison ? <p>{formatScore(comparison.currentScore)} → {formatScore(comparison.candidateScore)}</p> : <p>OCR or paste both item tooltips to calculate a formula result.</p>}
       <p className="muted">{profileNote}</p>
       {weighted && <p className="weighted-line">Weighted score {weighted.scoreDelta > 0 ? "+" : ""}{formatScore(weighted.scoreDelta)} pts ({formatPercent(weighted.percentDelta)})</p>}
       <div className="reason-list">
