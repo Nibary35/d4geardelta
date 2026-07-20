@@ -16,18 +16,24 @@ import type { CSSProperties } from "react";
 
 type StatKey =
   | "basePower"
-  | "skillMultiplierPct"
-  | "primaryDamagePct"
+  | "mainStat"
+  | "allStatMultiplierPct"
+  | "mainStatMultiplierPct"
+  | "skillCoefficientPct"
+  | "skillRanks"
   | "additiveDamagePct"
+  | "critAdditiveDamagePct"
   | "critChancePct"
   | "critDamagePct"
   | "vulnerableDamagePct"
   | "vulnerableUptimePct"
+  | "dotMultiplierPct"
+  | "allDamageMultiplierPct"
   | "attackSpeedPct"
   | "overpowerChancePct"
   | "overpowerDamagePct"
-  | "skillRankBonusPct"
-  | "multiplicativeDamagePct";
+  | "multiplicativeDamagePct"
+  | "dotSharePct";
 
 type DamageStats = Record<StatKey, number>;
 
@@ -103,19 +109,25 @@ type ScanTarget = "equipped" | "candidate";
 type ScanMode = "gear" | "seal";
 
 const FIELD_DEFS: StatField[] = [
-  { key: "basePower", label: "Base power / weapon DPS", current: 1000, candidate: 1000, item: true },
-  { key: "skillMultiplierPct", label: "Skill multiplier %", current: 100, candidate: 100, item: false },
-  { key: "primaryDamagePct", label: "Primary stat damage %", current: 80, candidate: 80, item: true },
-  { key: "additiveDamagePct", label: "Additive damage %", current: 220, candidate: 245, item: true },
+  { key: "basePower", label: "Weapon damage / DPS", current: 1000, candidate: 1000, item: true },
+  { key: "mainStat", label: "Main stat sum", current: 800, candidate: 800, item: true },
+  { key: "allStatMultiplierPct", label: "[x] all stat %", current: 0, candidate: 0, item: true },
+  { key: "mainStatMultiplierPct", label: "[x] main stat %", current: 0, candidate: 0, item: true },
+  { key: "skillCoefficientPct", label: "Skill coefficient % at rank 1", current: 45, candidate: 45, item: false },
+  { key: "skillRanks", label: "Total skill ranks", current: 1, candidate: 1, item: true },
+  { key: "additiveDamagePct", label: "Shared additive damage %", current: 220, candidate: 245, item: true },
+  { key: "critAdditiveDamagePct", label: "Crit-only additive damage %", current: 0, candidate: 0, item: true },
   { key: "critChancePct", label: "Critical chance %", current: 35, candidate: 35, item: true },
-  { key: "critDamagePct", label: "Critical damage %", current: 75, candidate: 75, item: true },
+  { key: "critDamagePct", label: "Critical strike damage multiplier %", current: 75, candidate: 75, item: true },
   { key: "vulnerableDamagePct", label: "Vulnerable damage %", current: 40, candidate: 40, item: true },
-  { key: "vulnerableUptimePct", label: "Vulnerable uptime %", current: 70, candidate: 70, item: false },
-  { key: "attackSpeedPct", label: "Attack speed %", current: 20, candidate: 20, item: true },
-  { key: "overpowerChancePct", label: "Overpower chance %", current: 3, candidate: 3, item: true },
-  { key: "overpowerDamagePct", label: "Overpower damage %", current: 50, candidate: 50, item: true },
-  { key: "skillRankBonusPct", label: "Skill rank bonus %", current: 0, candidate: 0, item: true },
-  { key: "multiplicativeDamagePct", label: "Extra multiplicative %", current: 0, candidate: 0, item: true },
+  { key: "vulnerableUptimePct", label: "Vulnerable uptime %", current: 100, candidate: 100, item: false },
+  { key: "dotMultiplierPct", label: "Damage over time multiplier %", current: 0, candidate: 0, item: true },
+  { key: "allDamageMultiplierPct", label: "[x] all damage / non-physical %", current: 0, candidate: 0, item: true },
+  { key: "attackSpeedPct", label: "Attack speed %", current: 0, candidate: 0, item: true },
+  { key: "overpowerChancePct", label: "Overpower chance %", current: 0, candidate: 0, item: true },
+  { key: "overpowerDamagePct", label: "Overpower damage %", current: 0, candidate: 0, item: true },
+  { key: "multiplicativeDamagePct", label: "[x] damage %", current: 0, candidate: 0, item: true },
+  { key: "dotSharePct", label: "DoT share of damage %", current: 0, candidate: 0, item: false },
 ];
 
 const ITEM_FIELDS = FIELD_DEFS.filter((field) => field.item);
@@ -233,19 +245,63 @@ function parseNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function estimateScore(stats: DamageStats): number {
-  const baseSkill = Math.max(0, stats.basePower) * Math.max(0, stats.skillMultiplierPct) / 100;
-  return (
-    baseSkill *
-    percentMultiplier(stats.primaryDamagePct) *
-    percentMultiplier(stats.additiveDamagePct) *
-    critMultiplier(stats.critChancePct, stats.critDamagePct) *
-    uptimeMultiplier(stats.vulnerableDamagePct, stats.vulnerableUptimePct) *
-    critMultiplier(stats.overpowerChancePct, stats.overpowerDamagePct) *
-    percentMultiplier(stats.attackSpeedPct) *
-    percentMultiplier(stats.skillRankBonusPct) *
-    percentMultiplier(stats.multiplicativeDamagePct)
-  );
+function estimateScore(stats: DamageStats, className = ""): number {
+  return damageBreakdown(stats, className).finalDamage;
+}
+
+function damageBreakdown(stats: DamageStats, className = "") {
+  const weaponDamage = Math.max(0, stats.basePower);
+  const mainStatMultiplier = 1 + Math.max(0, stats.mainStat) *
+    percentMultiplier(stats.allStatMultiplierPct + stats.mainStatMultiplierPct) /
+    mainStatDivisor(className);
+  const skillCoefficient = Math.max(0, stats.skillCoefficientPct) / 100 *
+    skillRankMultiplier(stats.skillRanks);
+  const vulnerableMultiplier = uptimeMultiplier(stats.vulnerableDamagePct, stats.vulnerableUptimePct);
+  const nonCritAdditive = percentMultiplier(stats.additiveDamagePct);
+  const critAdditive = percentMultiplier(stats.additiveDamagePct + stats.critAdditiveDamagePct);
+  const critDamageMultiplier = percentMultiplier(stats.critDamagePct);
+  const dotMultiplier = percentMultiplier(stats.dotMultiplierPct);
+  const allDamageMultiplier = percentMultiplier(stats.allDamageMultiplierPct);
+  const attackSpeedMultiplier = percentMultiplier(stats.attackSpeedPct);
+  const extraDamageMultiplier = percentMultiplier(stats.multiplicativeDamagePct);
+  const overpowerMultiplier = critMultiplier(stats.overpowerChancePct, stats.overpowerDamagePct);
+  const critChance = clamp(stats.critChancePct / 100, 0, 1);
+  const dotShare = clamp(stats.dotSharePct / 100, 0, 1);
+  const baseProduct =
+    weaponDamage *
+    mainStatMultiplier *
+    vulnerableMultiplier *
+    allDamageMultiplier *
+    skillCoefficient *
+    attackSpeedMultiplier *
+    extraDamageMultiplier *
+    0.2;
+  const nonCritProduct = baseProduct * nonCritAdditive;
+  const critProduct = baseProduct * critAdditive * critDamageMultiplier * 1.5;
+  const directAverage = critProduct * critChance + nonCritProduct * (1 - critChance);
+  const dotProduct = baseProduct * nonCritAdditive * dotMultiplier;
+  const blendedDamage = directAverage * (1 - dotShare) + dotProduct * dotShare;
+
+  return {
+    weaponDamage,
+    mainStatMultiplier,
+    skillCoefficient,
+    nonCritProduct,
+    critProduct,
+    dotProduct,
+    directAverage,
+    finalDamage: blendedDamage * overpowerMultiplier,
+  };
+}
+
+function mainStatDivisor(className: string): number {
+  return className.trim().toLowerCase() === "barbarian" ? 900 : 800;
+}
+
+function skillRankMultiplier(value: number): number {
+  const ranks = Math.max(1, value);
+  const rankTier = Math.trunc(ranks / 5);
+  return Math.max(0, 1 + 0.1 * (ranks - rankTier - 1) + 0.15 * rankTier);
 }
 
 function percentMultiplier(value: number): number {
@@ -262,19 +318,23 @@ function uptimeMultiplier(damagePct: number, uptimePct: number): number {
   return Math.max(0, 1 + uptime * Math.max(0, damagePct) / 100);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function percentDelta(current: number, candidate: number): number | null {
   if (Math.abs(current) < 1e-9) return null;
   return (candidate / current - 1) * 100;
 }
 
-function compareStats(current: DamageStats, candidate: DamageStats) {
-  const currentScore = estimateScore(current);
-  const candidateScore = estimateScore(candidate);
+function compareStats(current: DamageStats, candidate: DamageStats, className = "") {
+  const currentScore = estimateScore(current, className);
+  const candidateScore = estimateScore(candidate, className);
   const impacts = FIELD_DEFS.map((field) => {
     const currentValue = current[field.key];
     const candidateValue = candidate[field.key];
     const patched = { ...current, [field.key]: candidateValue };
-    const patchedScore = estimateScore(patched);
+    const patchedScore = estimateScore(patched, className);
     return {
       label: field.label,
       valueDelta: candidateValue - currentValue,
@@ -336,37 +396,45 @@ function isDefensiveOrUtility(label: string): boolean {
   ].some((term) => label.includes(term));
 }
 
-function mapAffixToDamageStat(affix: ParsedAffix, className: string): [StatKey, number] | null {
+function mapAffixToDamageStat(affix: ParsedAffix, className: string, mode: ScanMode | "profile" = "gear"): [StatKey, number] | null {
   if (affix.kind === "aspect") return null;
   const label = affix.label.trim();
   const lowered = label.toLowerCase();
   const normalized = normalizeLabel(label);
   const value = affix.value;
   const primary = classPrimaryStat(className);
+  const sealLike = mode === "seal";
+
+  if (sealLike) {
+    if (normalized === "allstats" || normalized === "allstat") return ["allStatMultiplierPct", value];
+    if (normalized === "mainstat" || lowered.includes("main stat")) return ["mainStatMultiplierPct", value];
+    if (normalized === "damage") return ["multiplicativeDamagePct", value];
+  }
 
   if (["strength", "dexterity", "intelligence", "willpower"].includes(normalized)) {
-    if (!primary || normalized === primary) return ["primaryDamagePct", value / 10];
+    if (!primary || normalized === primary) return ["mainStat", value];
     return null;
   }
-  if (normalized === "allstats" || normalized === "allstat") return ["primaryDamagePct", value / 10];
+  if (normalized === "allstats" || normalized === "allstat") return ["mainStat", value];
   if (lowered.includes("critical strike chance") || lowered.includes("critical chance") || lowered.includes("crit chance")) return ["critChancePct", value];
   if (lowered.includes("critical strike damage") || lowered.includes("critical damage") || lowered.includes("crit damage")) return ["critDamagePct", value];
   if (lowered.includes("vulnerable") && lowered.includes("damage")) return ["vulnerableDamagePct", value];
+  if ((lowered.includes("damage over time") || lowered.includes("dot")) && lowered.includes("multiplier")) return ["dotMultiplierPct", value];
   if (lowered.includes("attack speed")) return ["attackSpeedPct", value];
   if (lowered.includes("overpower chance")) return ["overpowerChancePct", value];
   if (lowered.includes("overpower") && lowered.includes("damage")) return ["overpowerDamagePct", value];
   if (lowered.includes("weapon damage") || lowered.includes("damage per second") || ["dps", "weapondps"].includes(normalized)) return ["basePower", value];
-  if (lowered.includes("rank") || /^to [a-z][a-z' -]+/.test(lowered)) return ["skillRankBonusPct", value * 10];
-  if (lowered.includes("multiplier") || lowered.includes("multiplicative")) return ["multiplicativeDamagePct", value];
+  if (lowered.includes("rank") || /^to [a-z][a-z' -]+/.test(lowered)) return ["skillRanks", value];
+  if (lowered.includes("multiplier") || lowered.includes("multiplicative")) return ["allDamageMultiplierPct", value];
   if (lowered.includes("damage") && !isDefensiveOrUtility(lowered)) return ["additiveDamagePct", value];
   return null;
 }
 
-function statsFromAffixes(affixes: ParsedAffix[], className: string): { stats: DamageStats; mapped: number } {
+function statsFromAffixes(affixes: ParsedAffix[], className: string, mode: ScanMode | "profile" = "gear"): { stats: DamageStats; mapped: number } {
   const stats = emptyStats();
   let mapped = 0;
   for (const affix of affixes) {
-    const target = mapAffixToDamageStat(affix, className);
+    const target = mapAffixToDamageStat(affix, className, mode);
     if (!target) continue;
     const [key, amount] = target;
     stats[key] += amount;
@@ -611,6 +679,25 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function coerceStoredStats(value: unknown, candidate = false, empty = false): DamageStats {
+  const source = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const stats = { ...(empty ? emptyStats() : defaultStats(candidate)) };
+  for (const field of FIELD_DEFS) {
+    if (source[field.key] !== undefined) {
+      stats[field.key] = parseNumber(source[field.key]);
+    }
+  }
+
+  if (source.primaryDamagePct !== undefined && source.mainStat === undefined) {
+    const oldPrimary = parseNumber(source.primaryDamagePct);
+    stats.mainStat = empty ? oldPrimary * 10 : oldPrimary / 100 * mainStatDivisor("");
+  }
+  if (source.skillRankBonusPct !== undefined && source.skillRanks === undefined) {
+    stats.skillRanks = (empty ? 0 : stats.skillRanks) + parseNumber(source.skillRankBonusPct) / 10;
+  }
+  return stats;
+}
+
 function coerceStoredSlot(value: unknown): SlotData {
   if (!value || typeof value !== "object") return emptySlot();
   const raw = value as Partial<SlotData>;
@@ -618,7 +705,7 @@ function coerceStoredSlot(value: unknown): SlotData {
     ...emptySlot(),
     ...raw,
     affixes: Array.isArray(raw.affixes) ? raw.affixes : [],
-    stats: { ...emptyStats(), ...(raw.stats ?? {}) },
+    stats: coerceStoredStats(raw.stats, false, true),
   };
 }
 
@@ -644,9 +731,9 @@ export function D4GearDeltaClient() {
 
   const profileAggregate = useMemo(() => aggregateProfile(profile), [profile]);
   const profileAdjustedCurrent = useMemo(() => applyProfileBaseline(currentStats, profileAggregate.stats, profileAggregate.mapped), [currentStats, profileAggregate]);
-  const liveComparison = useMemo(() => compareStats(currentStats, candidateStats), [currentStats, candidateStats]);
-  const gearComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, gearScan.equipped, gearScan.candidate), [profileAdjustedCurrent, gearScan]);
-  const sealComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, sealScan.equipped, sealScan.candidate), [profileAdjustedCurrent, sealScan]);
+  const liveComparison = useMemo(() => compareStats(currentStats, candidateStats, activeClass), [currentStats, candidateStats, activeClass]);
+  const gearComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, gearScan.equipped, gearScan.candidate, activeClass), [profileAdjustedCurrent, gearScan, activeClass]);
+  const sealComparison = useMemo(() => compareScannedItems(profileAdjustedCurrent, sealScan.equipped, sealScan.candidate, activeClass), [profileAdjustedCurrent, sealScan, activeClass]);
   const gearWeighted = useMemo(() => {
     const rows = weightedRowsFromAffixes(gearScan.equipped.affixes, gearScan.candidate.affixes, activeClass);
     return rows.length ? compareWeighted(rows) : null;
@@ -670,8 +757,8 @@ export function D4GearDeltaClient() {
         };
         /* eslint-disable react-hooks/set-state-in-effect -- Restores client-only localStorage after mount. */
         if (parsed.weightPreset) setWeightPreset(parsed.weightPreset);
-        if (parsed.currentStats) setCurrentStats({ ...defaultStats(false), ...parsed.currentStats });
-        if (parsed.candidateStats) setCandidateStats({ ...defaultStats(true), ...parsed.candidateStats });
+        if (parsed.currentStats) setCurrentStats(coerceStoredStats(parsed.currentStats, false));
+        if (parsed.candidateStats) setCandidateStats(coerceStoredStats(parsed.candidateStats, true));
         if (parsed.profile) {
           setProfile(Object.fromEntries(GEAR_SLOTS.map((slot) => [slot, coerceStoredSlot(parsed.profile?.[slot])])) as Record<string, SlotData>);
         }
@@ -817,7 +904,7 @@ export function D4GearDeltaClient() {
   }
 
   function applyParsedScan(mode: ScanMode, target: ScanTarget, text: string, imageUrl: string) {
-    const parsed = buildSlotFromText(text, activeClass, imageUrl);
+    const parsed = buildSlotFromText(text, activeClass, imageUrl, mode);
     const setter = mode === "gear" ? setGearScan : setSealScan;
     setter((scan) => ({ ...scan, [target]: parsed }));
     const mappedNote = parsed.mapped
@@ -879,8 +966,8 @@ export function D4GearDeltaClient() {
         importedBuild?: ImportedBuild | null;
       };
       if (data.weightPreset) setWeightPreset(data.weightPreset);
-      if (data.currentStats) setCurrentStats({ ...defaultStats(false), ...data.currentStats });
-      if (data.candidateStats) setCandidateStats({ ...defaultStats(true), ...data.candidateStats });
+      if (data.currentStats) setCurrentStats(coerceStoredStats(data.currentStats, false));
+      if (data.candidateStats) setCandidateStats(coerceStoredStats(data.candidateStats, true));
       if (data.profile) setProfile(Object.fromEntries(GEAR_SLOTS.map((slot) => [slot, coerceStoredSlot(data.profile?.[slot])])) as Record<string, SlotData>);
       if (data.importedBuild) setImportedBuild(data.importedBuild);
       setOcrStatus("Imported saved profile JSON.");
@@ -955,7 +1042,7 @@ export function D4GearDeltaClient() {
                   <span>Slots {profileAggregate.scanned}/{GEAR_SLOTS.length}</span>
                   <span>Mapped {profileAggregate.mapped}</span>
                   <span>Power {formatInput(profileAggregate.stats.basePower)}</span>
-                  <span>Primary {formatInput(profileAggregate.stats.primaryDamagePct)}%</span>
+                  <span>Main Stat {formatInput(profileAggregate.stats.mainStat)}</span>
                   <span>Crit {formatInput(profileAggregate.stats.critChancePct)}% / {formatInput(profileAggregate.stats.critDamagePct)}%</span>
                   <span>Vuln {formatInput(profileAggregate.stats.vulnerableDamagePct)}%</span>
                 </div>
@@ -1095,9 +1182,9 @@ function applyProfileBaseline(current: DamageStats, profileStats: DamageStats, m
   return next;
 }
 
-function buildSlotFromText(text: string, className: string, imageUrl = ""): SlotData {
+function buildSlotFromText(text: string, className: string, imageUrl = "", mode: ScanMode | "profile" = "gear"): SlotData {
   const parsed = parseGearText(text);
-  const mapped = statsFromAffixes(parsed.affixes, className);
+  const mapped = statsFromAffixes(parsed.affixes, className, mode);
   return {
     ...emptySlot(),
     ...parsed,
@@ -1108,9 +1195,9 @@ function buildSlotFromText(text: string, className: string, imageUrl = ""): Slot
   };
 }
 
-function compareScannedItems(current: DamageStats, equipped: ScanSide, candidate: ScanSide) {
+function compareScannedItems(current: DamageStats, equipped: ScanSide, candidate: ScanSide, className: string) {
   if (!equipped.mapped && !candidate.mapped) return null;
-  return compareStats(current, applyItemSwap(current, equipped.stats, candidate.stats));
+  return compareStats(current, applyItemSwap(current, equipped.stats, candidate.stats), className);
 }
 
 function GearSlotCard({ slot, data, selected, onSelect }: { slot: string; data: SlotData; selected: boolean; onSelect: (slot: string) => void }) {
@@ -1130,7 +1217,7 @@ function GearSlotCard({ slot, data, selected, onSelect }: { slot: string; data: 
 function slotStatSummary(data: SlotData): string {
   const pairs = [
     ["Power", data.stats.basePower, ""],
-    ["Primary", data.stats.primaryDamagePct, "%"],
+    ["Main", data.stats.mainStat, ""],
     ["Crit", data.stats.critChancePct, "%"],
     ["CritD", data.stats.critDamagePct, "%"],
     ["Vuln", data.stats.vulnerableDamagePct, "%"],
