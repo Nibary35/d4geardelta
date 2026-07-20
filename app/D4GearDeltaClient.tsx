@@ -812,17 +812,21 @@ export function D4GearDeltaClient() {
   }
 
   function parseSlotDraft() {
-    const parsed = buildSlotFromText(slotDraftText, activeClass, selectedData.imageUrl);
-    setProfile((profileData) => ({ ...profileData, [selectedSlot]: parsed }));
-    setOcrStatus(`Saved ${selectedSlot}: ${parsed.affixes.length} parsed row(s), ${parsed.mapped} mapped formula stat(s).`);
+    if (!slotDraftText.trim()) {
+      setOcrStatus(`No OCR/manual text for ${selectedSlot}. Click OCR or paste tooltip text before saving.`);
+      return;
+    }
+    applyParsedProfileSlot(selectedSlot, slotDraftText, selectedData.imageUrl);
   }
 
   async function handleImageFile(file: File, context: { type: "slot" } | { type: "scan"; mode: ScanMode; target: ScanTarget }) {
     if (!file.type.startsWith("image/")) return;
     const imageUrl = await readFileAsDataUrl(file);
     if (context.type === "slot") {
-      setProfile((profileData) => ({ ...profileData, [selectedSlot]: { ...profileData[selectedSlot], imageUrl } }));
-      setOcrStatus(`Loaded ${file.name} for ${selectedSlot}. Run OCR or paste text, then save the slot.`);
+      const slot = selectedSlot;
+      setProfile((profileData) => ({ ...profileData, [slot]: { ...emptySlot(), imageUrl } }));
+      setOcrStatus(`Loaded ${file.name} for ${slot}. OCR is starting automatically...`);
+      await scanImageForProfile(slot, imageUrl);
       return;
     }
     const setter = context.mode === "gear" ? setGearScan : setSealScan;
@@ -848,7 +852,8 @@ export function D4GearDeltaClient() {
   }
 
   async function runOcr(context: { type: "slot" } | { type: "scan"; mode: ScanMode; target: ScanTarget }) {
-    const imageUrl = context.type === "slot" ? profile[selectedSlot]?.imageUrl : (context.mode === "gear" ? gearScan : sealScan)[context.target].imageUrl;
+    const slot = selectedSlot;
+    const imageUrl = context.type === "slot" ? profile[slot]?.imageUrl : (context.mode === "gear" ? gearScan : sealScan)[context.target].imageUrl;
     if (!imageUrl) {
       setOcrStatus("Load or paste a screenshot first.");
       return;
@@ -857,8 +862,7 @@ export function D4GearDeltaClient() {
     try {
       const text = await recognizeTooltipImage(imageUrl, "OCR");
       if (context.type === "slot") {
-        setSlotDraftText(text);
-        setOcrStatus("OCR complete. Review the text, then save the slot.");
+        applyParsedProfileSlot(slot, text, imageUrl);
       } else {
         applyParsedScan(context.mode, context.target, text, imageUrl);
       }
@@ -876,9 +880,19 @@ export function D4GearDeltaClient() {
     }
   }
 
+  async function scanImageForProfile(slot: string, imageUrl: string) {
+    try {
+      const text = await recognizeTooltipImage(imageUrl, `${slot} OCR`);
+      applyParsedProfileSlot(slot, text, imageUrl);
+    } catch (error) {
+      setOcrStatus(`OCR failed for ${slot}: ${error instanceof Error ? error.message : "unknown browser OCR error"}`);
+    }
+  }
+
   async function recognizeTooltipImage(imageUrl: string, label: string): Promise<string> {
     const { recognize } = await import("tesseract.js");
-    const result = await recognize(imageUrl, "eng", {
+    const preparedImage = await prepareImageForOcr(imageUrl);
+    const result = await recognize(preparedImage, "eng", {
       logger: (message) => {
         if (message.status) {
           const progress = message.progress ? ` ${Math.round(message.progress * 100)}%` : "";
@@ -887,6 +901,40 @@ export function D4GearDeltaClient() {
       },
     });
     return result.data.text;
+  }
+
+  function prepareImageForOcr(imageUrl: string): Promise<string> {
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        const width = image.naturalWidth || image.width;
+        const height = image.naturalHeight || image.height;
+        if (!width || !height) {
+          resolve(imageUrl);
+          return;
+        }
+
+        const scale = Math.min(4, Math.max(1, 1200 / Math.max(width, 1)));
+        if (scale <= 1.05) {
+          resolve(imageUrl);
+          return;
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const context = canvas.getContext("2d");
+        if (!context) {
+          resolve(imageUrl);
+          return;
+        }
+        context.imageSmoothingEnabled = false;
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      image.onerror = () => resolve(imageUrl);
+      image.src = imageUrl;
+    });
   }
 
   function updateScanText(mode: ScanMode, target: ScanTarget, text: string) {
@@ -904,6 +952,12 @@ export function D4GearDeltaClient() {
   }
 
   function applyParsedScan(mode: ScanMode, target: ScanTarget, text: string, imageUrl: string) {
+    if (!text.trim()) {
+      const setter = mode === "gear" ? setGearScan : setSealScan;
+      setter((scan) => ({ ...scan, [target]: { ...scan[target], imageUrl, rawText: "" } }));
+      setOcrStatus(`OCR could not read ${target}. Try a tighter crop or paste the tooltip text manually.`);
+      return;
+    }
     const parsed = buildSlotFromText(text, activeClass, imageUrl, mode);
     const setter = mode === "gear" ? setGearScan : setSealScan;
     setter((scan) => ({ ...scan, [target]: parsed }));
@@ -911,6 +965,23 @@ export function D4GearDeltaClient() {
       ? `${parsed.mapped} mapped damage stat(s)`
       : "no mapped damage stats";
     setOcrStatus(`Parsed ${target}: ${parsed.affixes.length} row(s), ${mappedNote}.`);
+  }
+
+  function applyParsedProfileSlot(slot: string, text: string, imageUrl: string) {
+    if (!text.trim()) {
+      setProfile((profileData) => ({ ...profileData, [slot]: { ...profileData[slot], imageUrl, rawText: "" } }));
+      setOcrStatus(`OCR could not read ${slot}. Try a tighter crop or paste the tooltip text manually, then Save Slot.`);
+      return;
+    }
+    const parsed = buildSlotFromText(text, activeClass, imageUrl, "profile");
+    setProfile((profileData) => ({ ...profileData, [slot]: parsed }));
+    if (slot === selectedSlot) {
+      setSlotDraftText(text);
+    }
+    const mappedNote = parsed.mapped
+      ? `${parsed.mapped} mapped formula stat(s)`
+      : "no mapped formula stats";
+    setOcrStatus(`Saved ${slot}: ${parsed.affixes.length} parsed row(s), ${mappedNote}.`);
   }
 
   function clearScan(mode: ScanMode) {
