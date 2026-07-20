@@ -174,6 +174,11 @@ const WEIGHT_PRESETS = [
     affixes: ["Intelligence", "Weapon damage / DPS", "Critical strike chance %", "Critical strike damage %", "Vulnerable damage %", "Minion damage %", "Shadow damage over time %", "Attack speed %", "Cooldown reduction %", "Ranks to main skill"],
   },
   {
+    name: "Paladin - Holy / Block",
+    className: "Paladin",
+    affixes: ["Strength", "Weapon damage / DPS", "Critical strike chance %", "Critical strike damage %", "Vulnerable damage %", "Holy damage %", "Damage with shields %", "Block chance %", "Cooldown reduction %", "Ranks to main skill"],
+  },
+  {
     name: "Rogue - Crit / Vulnerable",
     className: "Rogue",
     affixes: ["Dexterity", "Weapon damage / DPS", "Critical strike chance %", "Critical strike damage %", "Vulnerable damage %", "Damage to close enemies %", "Imbuement damage %", "Attack speed %", "Cooldown reduction %", "Ranks to main skill"],
@@ -187,6 +192,11 @@ const WEIGHT_PRESETS = [
     name: "Spiritborn - Speed / Spirit Hall",
     className: "Spiritborn",
     affixes: ["Dexterity", "Weapon damage / DPS", "Critical strike chance %", "Critical strike damage %", "Vulnerable damage %", "Attack speed %", "Basic skill damage %", "Core skill damage %", "Cooldown reduction %", "Ranks to main skill"],
+  },
+  {
+    name: "Warlock - Shadow / Curses",
+    className: "Warlock",
+    affixes: ["Willpower", "Weapon damage / DPS", "Critical strike chance %", "Critical strike damage %", "Vulnerable damage %", "Shadow damage over time %", "Curse damage %", "Summon damage %", "Cooldown reduction %", "Ranks to main skill"],
   },
 ];
 
@@ -578,10 +588,12 @@ function classArt(className: string) {
     barbarian: { name: "Barbarian", motif: "AX", accent: "#c7563b", glow: "#5a1c16", tag: "Arsenal Fury" },
     druid: { name: "Druid", motif: "WD", accent: "#95b36c", glow: "#26351d", tag: "Wildshape Covenant" },
     necromancer: { name: "Necromancer", motif: "BN", accent: "#8ccfb3", glow: "#18302b", tag: "Bone & Shadow" },
+    paladin: { name: "Paladin", motif: "HL", accent: "#d8c16a", glow: "#3a3112", tag: "Sacred Oath" },
     rogue: { name: "Rogue", motif: "DG", accent: "#8a73df", glow: "#211a45", tag: "Precision Strike" },
     sorcerer: { name: "Sorcerer", motif: "AR", accent: "#64b5e5", glow: "#14314a", tag: "Arcane Torrent" },
     sorceress: { name: "Sorcerer", motif: "AR", accent: "#64b5e5", glow: "#14314a", tag: "Arcane Torrent" },
     spiritborn: { name: "Spiritborn", motif: "SP", accent: "#e0aa55", glow: "#3b2811", tag: "Spirit Hall" },
+    warlock: { name: "Warlock", motif: "HX", accent: "#b06be0", glow: "#2d173d", tag: "Hexbound Pact" },
   };
   return profiles[key] ?? { name: className || "Character", motif: "BD", accent: "#d7b56d", glow: "#2a1712", tag: "Build Baseline" };
 }
