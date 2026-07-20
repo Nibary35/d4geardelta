@@ -87,6 +87,7 @@ type ImportedVariant = {
 };
 
 type ImportedBuild = {
+  sourceName?: string;
   sourceUrl: string;
   name: string;
   className: string;
@@ -97,7 +98,7 @@ type ImportedBuild = {
   notesExcerpt: string;
 };
 
-type TabKey = "profile" | "gear" | "seals" | "build" | "weights" | "about";
+type TabKey = "profile" | "gear" | "seals" | "build" | "weights";
 type ScanTarget = "equipped" | "candidate";
 type ScanMode = "gear" | "seal";
 
@@ -621,7 +622,7 @@ export function D4GearDeltaClient() {
   const [sealScan, setSealScan] = useState<Record<ScanTarget, ScanSide>>({ equipped: emptySlot(), candidate: emptySlot() });
   const [importUrl, setImportUrl] = useState("https://d4builds.gg/builds/shred-druid-endgame/");
   const [importedBuild, setImportedBuild] = useState<ImportedBuild | null>(null);
-  const [importStatus, setImportStatus] = useState("Paste a D4Builds URL when you want guide targets and class art.");
+  const [importStatus, setImportStatus] = useState("Paste a D4Builds or Maxroll planner URL when you want guide targets and class art.");
   const [ocrStatus, setOcrStatus] = useState("OCR is local in your browser. First scan can take a little longer.");
   const [isHydrated, setIsHydrated] = useState(false);
   const importFileRef = useRef<HTMLInputElement | null>(null);
@@ -788,7 +789,7 @@ export function D4GearDeltaClient() {
   }
 
   async function importBuild() {
-    setImportStatus("Importing public D4Builds data...");
+    setImportStatus("Importing public build data...");
     try {
       const response = await fetch(`/api/import-d4builds?url=${encodeURIComponent(importUrl)}`);
       const data = await response.json() as ImportedBuild | { error?: string };
@@ -797,7 +798,7 @@ export function D4GearDeltaClient() {
       setImportedBuild(build);
       const matchingPreset = WEIGHT_PRESETS.find((preset) => preset.className.toLowerCase() === build.className.toLowerCase());
       if (matchingPreset) setWeightPreset(matchingPreset.name);
-      setImportStatus(`Imported ${build.name} (${build.className} S${build.season}).`);
+      setImportStatus(`Imported ${build.name} from ${build.sourceName ?? "build source"} (${build.className} S${build.season}).`);
     } catch (error) {
       setImportStatus(error instanceof Error ? error.message : "Could not import this build.");
     }
@@ -877,7 +878,6 @@ export function D4GearDeltaClient() {
           ["seals", "Seals & Charms"],
           ["build", "Build Import"],
           ["weights", "Manual Stats"],
-          ["about", "Launch Plan"],
         ].map(([key, label]) => (
           <button key={key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key as TabKey)}>{label}</button>
         ))}
@@ -984,7 +984,7 @@ export function D4GearDeltaClient() {
           <div className="panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">D4Builds import</p>
+                <p className="eyebrow">Build source import</p>
                 <h2>Guide Targets</h2>
               </div>
               <button className="primary-button" onClick={importBuild}><Search size={15} /> Import</button>
@@ -994,7 +994,7 @@ export function D4GearDeltaClient() {
             {importedBuild && (
               <div className="build-summary">
                 <h3>{importedBuild.name}</h3>
-                <p>{importedBuild.className} S{importedBuild.season} {importedBuild.lastUpdated ? `| ${importedBuild.lastUpdated}` : ""}</p>
+                <p>{[importedBuild.sourceName, importedBuild.className, importedBuild.season ? `S${importedBuild.season}` : "", importedBuild.lastUpdated].filter(Boolean).join(" | ")}</p>
                 <button className="ghost-button" onClick={applyImportedWeights}>Apply Suggested Weights</button>
               </div>
             )}
@@ -1022,24 +1022,6 @@ export function D4GearDeltaClient() {
         </section>
       )}
 
-      {activeTab === "about" && (
-        <section className="two-column">
-          <div className="panel">
-            <h2>Free URL Launch Checklist</h2>
-            <ul className="check-list">
-              <li>Host on a free platform URL like Cloudflare Pages, Vercel, or Netlify.</li>
-              <li>Add a privacy note: screenshots are processed locally in the browser.</li>
-              <li>Share short clips in class Discords, Reddit posts that allow self-promo, and build guide communities.</li>
-              <li>Add one clean sponsor/support slot later, after users trust the tool.</li>
-            </ul>
-          </div>
-          <div className="panel sponsor-panel">
-            <p className="eyebrow">Future monetization</p>
-            <h2>Reserved Sponsor Slot</h2>
-            <p className="muted">A tasteful single sponsor area can go here later. For launch, keeping this quiet helps the tool feel trustworthy.</p>
-          </div>
-        </section>
-      )}
     </main>
   );
 }

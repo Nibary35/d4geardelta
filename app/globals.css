@@ -483,19 +483,6 @@ button {
   color: var(--muted);
 }
 
-.check-list {
-  display: grid;
-  gap: 10px;
-  padding-left: 20px;
-  color: #e8d5bc;
-}
-
-.sponsor-panel {
-  background:
-    linear-gradient(135deg, rgba(215, 181, 109, 0.08), transparent 55%),
-    var(--panel);
-}
-
 @media (max-width: 1180px) {
   .two-column,
   .compare-grid,
